@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Our Town Collaborative Editor</title>
+    <!-- Link to the Litera theme -->
+    <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.2/dist/litera/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Additional CSS for layout and spacing */
+        body {
+            padding: 2rem;
+        }
+
+        .narrow-container {
+            width: 50%;
+            /* Middle 50% of the page */
+            margin: 0 auto;
+            /* Center the container horizontally */
+        }
+
+        #playText {
+            margin-top: 2rem;
+        }
+
+        .line {
+            margin-bottom: 1rem;
+            /* Space between lines */
+            padding: 0.5rem;
+            background-color: #f8f9fa;
+            /* Light background for each line */
+            border-radius: 5px;
+            /* Rounded corners */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            /* Subtle shadow */
+        }
+
+        .line:focus {
+            outline: none;
+            box-shadow: 0 0 8px rgba(0, 123, 255, 0.5);
+            /* Highlight on focus */
+            border: 1px solid #007bff;
+            /* Blue border on focus */
+        }
+
+        .italic {
+            font-style: italic;
+        }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+
+<body>
+    <div class="container narrow-container">
+        <h1 class="text-center">Edit "Our Town"</h1>
+        <div id="playText"></div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        // Helper to replace "|" with newlines
+        function formatText(text) {
+            return text.replace(/\|/g, '\n');
+        }
+
+        // Helper to replace newlines with "|" for storage
+        function unformatText(text) {
+            return text.replace(/\n/g, '|');
+        }
+
+        // Helper to save the caret position
+        function saveCaretPosition(element) {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return null;
+
+            const range = selection.getRangeAt(0);
+            return {
+                start: range.startOffset,
+                end: range.endOffset,
+                container: range.commonAncestorContainer === element.firstChild ? 'textNode' : null,
+            };
+        }
+
+        // Helper to restore the caret position
+        function restoreCaretPosition(element, caretPosition) {
+            if (!caretPosition) return;
+
+            const range = document.createRange();
+            const selection = window.getSelection();
+
+            if (caretPosition.container === 'textNode' && element.firstChild) {
+                range.setStart(element.firstChild, caretPosition.start);
+                range.setEnd(element.firstChild, caretPosition.end);
+            } else {
+                range.setStart(element, caretPosition.start);
+                range.setEnd(element, caretPosition.end);
+            }
+
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+
+        // Fetch play text and display it
+        fetch('/play_text')
+            .then(response => response.json())
+            .then(lines => {
+                const playTextDiv = document.getElementById('playText');
+                lines.forEach(line => {
+                    const lineDiv = document.createElement('div');
+                    lineDiv.contentEditable = true;
+                    lineDiv.className = `line ${line.direction ? 'italic' : ''}`; // Add 'italic' class if direction is true
+                    lineDiv.id = `line-${line.id}`;
+                    lineDiv.innerText = formatText(line.text); // Format text with newlines
+
+                    lineDiv.addEventListener('input', () => {
+                        // Save the caret position before emitting the event
+                        const caretPosition = saveCaretPosition(lineDiv);
+
+                        // Emit the update to the server
+                        socket.emit('update_text', {
+                            id: line.id,
+                            text: unformatText(lineDiv.innerText), // Replace newlines with "|"
+                        });
+
+                        // Restore the caret position after the update
+                        restoreCaretPosition(lineDiv, caretPosition);
+                    });
+
+                    playTextDiv.appendChild(lineDiv);
+                });
+            });
+
+        // Handle updates from other users
+        socket.on('text_updated', (data) => {
+            const lineDiv = document.getElementById(`line-${data.id}`);
+            if (lineDiv) {
+                // Save caret position if the user is editing this line
+                const caretPosition = document.activeElement === lineDiv ? saveCaretPosition(lineDiv) : null;
+
+                // Update the text with the latest version
+                lineDiv.innerText = formatText(data.text);
+
+                // Update italic class based on direction property
+                if (data.direction) {
+                    lineDiv.classList.add('italic');
+                } else {
+                    lineDiv.classList.remove('italic');
+                }
+
+                // Restore caret position if the user was editing this line
+                if (caretPosition) {
+                    restoreCaretPosition(lineDiv, caretPosition);
+                }
+            }
+        });
+    </script>
+
+
+</body>
+
+</html>
